@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Conexão Digital — Rádio Web</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preload" href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" as="style">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
 <style>
   :root{
@@ -177,6 +178,16 @@
     transition: all 0.18s ease;
   }
   .ctrl-btn:hover{ border-color: var(--amber); color: var(--amber); }
+  .ctrl-btn:focus-visible{
+    outline: 2px solid var(--amber);
+    outline-offset: 2px;
+  }
+  .ctrl-btn:disabled{
+    opacity: 0.5;
+    cursor: not-allowed;
+    border-color: var(--hairline);
+    color: var(--text-muted);
+  }
   .ctrl-btn svg{ width:18px; height:18px; }
 
   .play-btn{
@@ -187,6 +198,15 @@
     box-shadow: 0 0 0 0 rgba(255,138,61,0.4);
   }
   .play-btn:hover{ background: #ffa05f; color:var(--bg); border:none; transform: scale(1.04); }
+  .play-btn:focus-visible{
+    outline: 2px solid var(--bg);
+    outline-offset: 2px;
+  }
+  .play-btn:disabled{
+    opacity: 0.6;
+    cursor: not-allowed;
+    background: var(--amber-dim);
+  }
   .play-btn svg{ width:22px; height:22px; }
 
   /* volume */
@@ -201,6 +221,7 @@
   .volume-row svg{ width:15px; height:15px; flex-shrink:0; }
   input[type="range"]{
     -webkit-appearance:none;
+    -moz-appearance:none;
     width:100%;
     height:3px;
     border-radius:2px;
@@ -214,6 +235,22 @@
     background: var(--teal);
     cursor:pointer;
     box-shadow: 0 0 6px rgba(45,212,191,0.5);
+  }
+  input[type="range"]::-moz-range-track{
+    background: var(--hairline);
+    border: none;
+    border-radius: 2px;
+    height: 3px;
+  }
+  input[type="range"]::-moz-range-thumb{
+    -moz-appearance: none;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--teal);
+    cursor: pointer;
+    box-shadow: 0 0 6px rgba(45,212,191,0.5);
+    border: none;
   }
 
   /* hidden yt player mount (kept tiny, off-canvas but rendered per API requirements) */
@@ -323,7 +360,7 @@
       <span>88.1</span><span>92.5</span><span class="active" id="freq-active">98.7</span><span>104.3</span><span>110.9</span>
     </div>
 
-    <div class="now-playing">
+    <div class="now-playing" aria-live="polite" aria-label="Reprodução agora">
       <div class="track-index" id="track-index">FAIXA — / —</div>
       <div class="track-title" id="track-title">Carregando playlist…</div>
       <div class="track-artist" id="track-artist">&nbsp;</div>
@@ -334,20 +371,20 @@
     </div>
 
     <div class="controls">
-      <button class="ctrl-btn" id="prev-btn" title="Faixa anterior">
+      <button class="ctrl-btn" id="prev-btn" aria-label="Faixa anterior">
         <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h2v12H6zm3.5 6l8.5 6V6z"/></svg>
       </button>
-      <button class="ctrl-btn play-btn" id="play-btn" title="Tocar/Pausar">
+      <button class="ctrl-btn play-btn" id="play-btn" aria-label="Tocar ou pausar">
         <svg id="play-icon" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
       </button>
-      <button class="ctrl-btn" id="next-btn" title="Próxima faixa">
+      <button class="ctrl-btn" id="next-btn" aria-label="Próxima faixa">
         <svg viewBox="0 0 24 24" fill="currentColor"><path d="M16 6h2v12h-2zm-9.5 6L15 6v12z"/></svg>
       </button>
     </div>
 
     <div class="volume-row">
       <svg viewBox="0 0 24 24" fill="currentColor"><path d="M3 10v4h4l5 5V5L7 10H3zm13.5 2c0-1.77-1-3.29-2.5-4.03v8.05c1.5-.73 2.5-2.25 2.5-4.02z"/></svg>
-      <input type="range" id="volume" min="0" max="100" value="70">
+      <input type="range" id="volume" min="0" max="100" value="70" aria-label="Volume">
     </div>
 
     <div id="yt-mount"></div>
@@ -398,6 +435,7 @@
   let videoIds = [];
   let metaCache = {}; // id -> {title, artist}
   let currentIndex = 0;
+  let volumeTimeout;
 
   function onYouTubeIframeAPIReady(){
     player = new YT.Player('yt-mount', {
@@ -417,7 +455,13 @@
   window.onYouTubeIframeAPIReady = onYouTubeIframeAPIReady;
 
   function onPlayerReady(){
-    els.volume.addEventListener('input', () => player.setVolume(Number(els.volume.value)));
+    // Volume control with debouncing to reduce setVolume() calls
+    els.volume.addEventListener('input', () => {
+      clearTimeout(volumeTimeout);
+      volumeTimeout = setTimeout(() => {
+        player.setVolume(Number(els.volume.value));
+      }, 50);
+    });
     player.setVolume(Number(els.volume.value));
 
     // pega os ids da playlist assim que disponível
@@ -486,22 +530,31 @@
     });
   }
 
+  // Retry logic for oEmbed metadata fetching
+  async function fetchMetaWithRetry(id, maxRetries = 2) {
+    for (let attempt = 0; attempt < maxRetries; attempt++) {
+      try {
+        const res = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${id}&format=json`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return await res.json();
+      } catch (err) {
+        if (attempt === maxRetries - 1) return null;
+        await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
+      }
+    }
+  }
+
   // busca título/artista real via oEmbed do YouTube (sem precisar de API key)
   async function fetchAllMeta(){
     await Promise.all(videoIds.map(async (id, i) => {
-      try{
-        const res = await fetch(`https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${id}&format=json`);
-        if (!res.ok) throw new Error('fail');
-        const data = await res.json();
+      const data = await fetchMetaWithRetry(id);
+      if (data) {
         metaCache[id] = { title: data.title, artist: data.author_name };
         const titleEl = document.getElementById(`row-title-${i}`);
         const artistEl = document.getElementById(`row-artist-${i}`);
         if (titleEl) titleEl.textContent = data.title;
         if (artistEl) artistEl.textContent = data.author_name;
         if (i === currentIndex) updateNowPlaying();
-      }catch(err){
-        const titleEl = document.getElementById(`row-title-${i}`);
-        if (titleEl) titleEl.textContent = `Faixa ${i+1}`;
       }
     }));
   }
@@ -515,6 +568,31 @@
   });
   els.prevBtn.addEventListener('click', () => player && player.previousVideo && player.previousVideo());
   els.nextBtn.addEventListener('click', () => player && player.nextVideo && player.nextVideo());
+
+  // Keyboard controls
+  document.addEventListener('keydown', (e) => {
+    if (e.code === 'Space' && e.target === document.body) {
+      e.preventDefault();
+      els.playBtn.click();
+    }
+    if (e.code === 'ArrowRight') els.nextBtn.click();
+    if (e.code === 'ArrowLeft') els.prevBtn.click();
+  });
+
+  // Offline/online event handlers
+  window.addEventListener('offline', () => {
+    els.playBtn.disabled = true;
+    els.prevBtn.disabled = true;
+    els.nextBtn.disabled = true;
+    els.title.textContent = 'Desconectado';
+  });
+
+  window.addEventListener('online', () => {
+    els.playBtn.disabled = false;
+    els.prevBtn.disabled = false;
+    els.nextBtn.disabled = false;
+    updateNowPlaying();
+  });
 
 </script>
 <script src="https://www.youtube.com/iframe_api"></script>
